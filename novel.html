@@ -371,17 +371,20 @@ function parseChars(){const raw=$('char_input').value.trim();if(!raw)return[];le
 
 function parseOutline(text){
   const parts=text.split(/(第[一二三四五六七八九十\d]+章)/g);
-  const chs=[];let content='';
+  const chs=[];let content='';let seenChapter=false;
   for(let i=0;i<parts.length;i++){
     const p=parts[i];
-    if(/^第[一二三四五六七八九十\d]+章$/.test(p)){if(content.trim())chs.push({title:'',content:content.trim()});content=''}
-    else if(i>0&&/^第[一二三四五六七八九十\d]+章$/.test(parts[i-1])){const fp=p.search(/[。！？\.\!\?\n]/);content=(fp>0&&fp<30)?p.slice(fp+1):p}
-    else{content+=p}
+    if(/^第[一二三四五六七八九十\d]+章$/.test(p)){
+      if(content.trim()&&seenChapter)chs.push({title:'',content:content.trim()});
+      content='';seenChapter=true;
+    }else if(i>0&&/^第[一二三四五六七八九十\d]+章$/.test(parts[i-1])){
+      const fp=p.search(/[。！？\.\!\?\n]/);
+      content=(fp>0&&fp<30)?p.slice(fp+1):p;
+    }else if(seenChapter){content+=p}
   }
-  if(content.trim())chs.push({title:'',content:content.trim()});
-  const real=chs.filter(c=>c.content.trim());
-  real.forEach((c,i)=>c.title='第'+(i+1)+'章');
-  return real.length?real:[{title:'全文',content:text}];
+  if(content.trim()&&seenChapter)chs.push({title:'',content:content.trim()});
+  chs.forEach((c,i)=>c.title='第'+(i+1)+'章');
+  return chs.length?chs:[{title:'全文',content:text}];
 }
 // ==================== STATE ANCHOR ====================
 class StateAnchor{
