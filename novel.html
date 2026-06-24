@@ -544,7 +544,9 @@ function buildUserPrompt(chContent,minWords,chNum,ctx,goal,enhanced){
   }else{
     p+='根据大纲写出本章完整内容。';
   }
-  p+='\n要求：正文至少'+minWords+'字，描写具体。';
+  const names=_anchor.names.length?_anchor.names.join('、'):'';
+  if(names)p='!!! 主角名字是【'+names+'】，全文不得改名，不得用其他名字替代 !!!\n\n'+p;
+  p+='\n要求：正文至少'+minWords+'字，描写具体。主角名字必须始终使用【'+names+'】，不得改为其他名字。';
   if(goal)p+='\n本章必须达成：'+goal+'。';
   return p;
 }
@@ -640,7 +642,8 @@ async function startGenerate(){
     const enhanced=$('use_enhanced').checked;
     // 锚点放 system prompt 末尾 + 人物名锁定
     const banStr=_anchor.ban.length?('\n【硬性禁止】'+_anchor.ban.join('|')+' ——本章绝对禁止出现以上任何一项。'):'';
-    const sysWithAnchor=system+'\n\n!!! 以下核心设定必须严格遵守，优先级高于一切 !!!\n人物名称：'+(_anchor.names.join('、')||'不变')+'\n当前关系阶段：'+(_anchor.relationship||'初始')+'\n物理状态：'+anchorStr+banStr+'\n!!! 绝对不可与上述设定冲突 !!!';
+    const nameLock='主角名字：'+(_anchor.names.join('、')||'不变')+'。本章全文不得使用其他名字替代主角名。这是最高优先级硬性约束。';
+    const sysWithAnchor=system+'\n\n!!! 核心设定——绝对不可违反 !!!\n'+nameLock+'\n当前关系阶段：'+(_anchor.relationship||'初始')+'\n状态：'+anchorStr+banStr+'\n!!! 上述设定优先级高于一切——尤其主角名字不可更改 !!!';
     const prompt=buildUserPrompt(ch.content,minWords,i+1,ctx,_anchor.goal,enhanced);
     let content=null;
     for(let a=0;a<3;a++){try{
@@ -682,7 +685,8 @@ async function regenerateChapter(i){
   let ctx='【核心锚点】'+anchorStr+'\n';
   const enhanced=$('use_enhanced').checked;
   const banStr=_anchor.ban.length?('\n【硬性禁止】'+_anchor.ban.join('|')):'';
-  const sysWithAnchor=_sys+'\n\n!!! 核心设定 !!!\n人物：'+(_anchor.names.join('、')||'不变')+'\n关系：'+(_anchor.relationship||'初始')+'\n'+anchorStr+banStr;
+  const nameLock='主角名字：'+(_anchor.names.join('、')||'不变')+'——绝对不可改名';
+  const sysWithAnchor=_sys+'\n\n!!! '+nameLock+' !!!\n关系：'+(_anchor.relationship||'初始')+'\n'+anchorStr+banStr;
   const prompt=buildUserPrompt(ch.content,_minWords,i+1,ctx,'',enhanced);
   let content=null;
   for(let a=0;a<2;a++){try{content=await callAPI(sysWithAnchor,prompt,_maxTok,_temp);const check=_anchor.update(content);if(check.violated){addLog('  ⚠ 违反禁止项:'+check.rule+'，重试...','var(--rose)');continue};break}catch(e){addLog('  重生成失败: '+(e.message||e),'var(--rose)');if(a===0)await new Promise(r=>setTimeout(r,2000))}}
