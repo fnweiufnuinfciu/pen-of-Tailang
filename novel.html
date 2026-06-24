@@ -199,8 +199,11 @@ input[type=number]{-moz-appearance:textfield}input[type=number]::-webkit-inner-s
     <label>粘贴需要审查的小说文本</label>
     <textarea id="review_input" style="min-height:260px" placeholder="粘贴全文章节...&#10;支持几十万字：自动分块扫描+聚合验证"></textarea>
     <div class="row" style="margin-top:4px"><div><label>每块字数</label><input id="review_chunk" value="8000" type="number" step="1000" min="2000" max="15000"></div><div><label>最大块数</label><input id="review_maxchunks" value="10" type="number" step="5" min="1" max="50"></div></div>
-    <span style="font-size:10px;color:var(--text-dim)">总覆盖 = 每块字数 × 最大块数（默认8万字）。块数越多审查越慢但越全面。</span>
-    <button class="btn btn-ghost" onclick="loadReviewFile()" style="margin-top:4px">📂 载入文件</button>
+    <span style="font-size:10px;color:var(--text-dim)">总覆盖 = 每块字数 × 最大块数。可手动调参或点「自动」一键优化。</span>
+    <div style="display:flex;gap:6px;margin-top:4px">
+      <button class="btn btn-ghost" onclick="autoDetectReview()" style="flex:1">📐 自动检测字数</button>
+      <button class="btn btn-ghost" onclick="loadReviewFile()" style="flex:1">📂 载入文件</button>
+    </div>
     <button class="btn btn-primary" id="btn_review" onclick="doReview()" style="margin-top:8px">🔍 开始审查</button>
     <div class="msg" id="review_msg"></div>
   </div>
@@ -697,7 +700,18 @@ async function regenerateChapter(i){
 
 // ==================== REVIEWER ====================
 let gIssues='',gSuggestions='',gRevRaw='';
-function loadReviewFile(){const i=document.createElement('input');i.type='file';i.accept='.txt,.md';i.onchange=async e=>{const f=e.target.files[0];if(f)$('review_input').value=await f.text()};i.click()}
+function autoDetectReview(){
+  const len=$('review_input').value.length;
+  if(!len){$('review_msg').innerHTML='<span class="rose">请先粘贴文本</span>';return}
+  let cSize,cMax;
+  if(len<10000){cSize=4000;cMax=3}
+  else if(len<50000){cSize=6000;cMax=Math.ceil(len/6000)}
+  else if(len<200000){cSize=8000;cMax=Math.min(30,Math.ceil(len/8000))}
+  else{cSize=10000;cMax=Math.min(50,Math.ceil(len/10000))}
+  $('review_chunk').value=cSize;$('review_maxchunks').value=cMax;
+  $('review_msg').innerHTML='<span style="color:#6b9c6b">已自动设置：'+len+'字 → 每块'+cSize+'字 × '+cMax+'块</span>';
+}
+function loadReviewFile(){const i=document.createElement('input');i.type='file';i.accept='.txt,.md';i.onchange=async e=>{const f=e.target.files[0];if(f){$('review_input').value=await f.text();autoDetectReview()}};i.click()}
 function switchReviewTab(name){
   ['issues','fixed','raw'].forEach(n=>{$(n==='issues'?'result_issues':n==='fixed'?'result_fixed':'result_rev_raw').style.display=n===name?'block':'none'});
   document.querySelectorAll('#page_reviewer .plan-tab').forEach((t,i)=>{t.classList.toggle('on',(i===0&&name==='issues')||(i===1&&name==='fixed')||(i===2&&name==='raw'))});
