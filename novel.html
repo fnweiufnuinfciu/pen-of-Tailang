@@ -87,6 +87,7 @@ input[type=number]{-moz-appearance:textfield}input[type=number]::-webkit-inner-s
   <div class="nav-tabs">
     <div class="nav-tab active" onclick="switchPage('planner')">&#9733; 故事规划<span class="badge">大纲 & 角色</span></div>
     <div class="nav-tab" onclick="switchPage('generator')">&#9998; 小说生成<span class="badge">逐章写作</span></div>
+    <div class="nav-tab" onclick="switchPage('reviewer')">🔍 审查校对<span class="badge">逻辑 & 连贯</span></div>
   </div>
 </nav>
 
@@ -192,6 +193,27 @@ input[type=number]{-moz-appearance:textfield}input[type=number]::-webkit-inner-s
 </div>
 </div>
 
+<!-- ==================== REVIEWER PAGE ==================== -->
+<div class="page" id="page_reviewer">
+  <div class="sidebar">
+    <label>粘贴需要审查的小说文本</label>
+    <textarea id="review_input" style="min-height:300px" placeholder="粘贴一章或多章内容...&#10;AI 将检查：逻辑矛盾、设定冲突、时间线错误、人物关系不一致、物品丢失/凭空出现等问题。"></textarea>
+    <button class="btn btn-ghost" onclick="loadReviewFile()" style="margin-top:4px">📂 载入文件</button>
+    <button class="btn btn-primary" id="btn_review" onclick="doReview()" style="margin-top:8px">🔍 开始审查</button>
+    <div class="msg" id="review_msg"></div>
+  </div>
+  <div class="plan-right">
+    <div class="plan-tabs">
+      <div class="plan-tab on" onclick="switchReviewTab('issues')">⚠️ 问题清单</div>
+      <div class="plan-tab" onclick="switchReviewTab('fixed')">✅ 修改建议</div>
+      <div class="plan-tab" onclick="switchReviewTab('raw')">📄 原始输出</div>
+    </div>
+    <div class="plan-result" id="result_issues"><div class="placeholder"><div class="placeholder-icon">🔍</div><div>审查结果将显示在这里</div></div></div>
+    <div class="plan-result" id="result_fixed" style="display:none"><div class="placeholder"><div class="placeholder-icon">✅</div><div>修改建议将显示在这里</div></div></div>
+    <div class="plan-result" id="result_rev_raw" style="display:none"><div class="placeholder"><div class="placeholder-icon">📄</div><div>原始输出将显示在这里</div></div></div>
+  </div>
+</div>
+
 <script>
 // ==================== GLOBAL ====================
 const LS='nv_';
@@ -202,8 +224,10 @@ const $=id=>document.getElementById(id);
 function switchPage(name){
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  if(name==='planner'){document.querySelector('.nav-tab:first-child').classList.add('active');$('page_planner').classList.add('active')}
-  else{document.querySelector('.nav-tab:last-child').classList.add('active');$('page_generator').classList.add('active')}
+  const tabs=document.querySelectorAll('.nav-tab');
+  if(name==='planner'){tabs[0].classList.add('active');$('page_planner').classList.add('active')}
+  else if(name==='generator'){tabs[1].classList.add('active');$('page_generator').classList.add('active')}
+  else{tabs[2].classList.add('active');$('page_reviewer').classList.add('active')}
 }
 
 function getAPIKey(){return $('api_key').value}
@@ -667,6 +691,57 @@ async function regenerateChapter(i){
   chCache=chCache.filter(c=>!c.title.startsWith('第'+(i+1)+'章'));
   chCache.push({title:fullTitle,content,chNum:i+1});
   chCache.sort((a,b)=>a.chNum-b.chNum);
+}
+
+// ==================== REVIEWER ====================
+let gIssues='',gSuggestions='',gRevRaw='';
+function loadReviewFile(){const i=document.createElement('input');i.type='file';i.accept='.txt,.md';i.onchange=async e=>{const f=e.target.files[0];if(f)$('review_input').value=await f.text()};i.click()}
+function switchReviewTab(name){
+  ['issues','fixed','raw'].forEach(n=>{$(n==='issues'?'result_issues':n==='fixed'?'result_fixed':'result_rev_raw').style.display=n===name?'block':'none'});
+  document.querySelectorAll('#page_reviewer .plan-tab').forEach((t,i)=>{t.classList.toggle('on',(i===0&&name==='issues')||(i===1&&name==='fixed')||(i===2&&name==='raw'))});
+}
+
+function parseReviewResult(text){
+  let issues='',suggestions='';
+  const si=text.search(/修改建议|改进方案|修正意见/);
+  if(si>-1){issues=text.slice(0,si).trim();suggestions=text.slice(si).trim()}
+  else{issues=text;suggestions='（未能分离修改建议，请查看原始输出）'}
+  return{issues,suggestions};
+}
+
+async function doReview(){
+  const apiKey=getAPIKey();if(!apiKey){$('review_msg').innerHTML='<span class="rose">请填写 API Key</span>';return}
+  const text=$('review_input').value.trim();if(!text){$('review_msg').innerHTML='<span class="rose">请粘贴小说文本</span>';return}
+  $('btn_review').disabled=true;$('btn_review').textContent='审查中...';
+  $('review_msg').innerHTML='<span class="gold">AI 正在审查...</span>';
+  $('result_issues').innerHTML='<div class="placeholder"><div class="placeholder-icon" style="animation:pulse 1s infinite">🔍</div><div>AI 正在分析...</div></div>';
+  $('result_fixed').innerHTML='<div class="placeholder"><div class="placeholder-icon" style="animation:pulse 1s infinite">🔍</div></div>';
+  $('result_rev_raw').innerHTML='<div class="placeholder"><div class="placeholder-icon" style="animation:pulse 1s infinite">🔍</div></div>';
+
+  const baseUrl=$('base_url').value||'https://api.deepseek.com/v1';
+  const model=$('model').value||'deepseek-chat';
+  const prompt='请仔细审查以下小说文本，找出所有逻辑问题和连贯性问题。\n\n审查项目：\n1. 情节矛盾：前后设定是否冲突（如角色断臂后突然用拳、已丢失物品再次出现）\n2. 人物关系：关系状态是否一致（如上一章已告白，本章又变回暧昧）\n3. 时间线：日期、年龄、季节等是否连贯\n4. 地理空间：场景转换是否合理\n5. 角色名：名字是否前后一致\n6. 身份设定：职业、年龄、能力等是否矛盾\n\n请用以下格式输出：\n\n## 问题清单\n逐条列出发现的问题，每条标注严重程度（严重/中等/轻微）和具体位置\n\n## 修改建议\n针对每个问题给出具体的修改方案\n\n=== 待审查文本 ===\n'+text.slice(0,12000);
+
+  try{
+    const resp=await fetch('/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      _url:baseUrl+'/chat/completions',
+      _headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
+      _body:{model,messages:[{role:'system',content:'你是一个专业的小说编辑。擅长发现情节矛盾、设定冲突和逻辑漏洞。'},{role:'user',content:prompt}],max_tokens:4000,temperature:0.4,top_p:0.9}
+    })});
+    if(!resp.ok){const err=await resp.text();throw new Error('API '+resp.status+': '+err.slice(0,300))}
+    const data=await resp.json();
+    gRevRaw=data.choices[0].message.content;
+    const {issues,suggestions}=parseReviewResult(gRevRaw);
+    gIssues=issues;gSuggestions=suggestions;
+    $('result_issues').textContent=issues||'（未生成）';
+    $('result_fixed').textContent=suggestions||'（未生成）';
+    $('result_rev_raw').textContent=gRevRaw;
+    $('review_msg').innerHTML='<span style="color:#6b9c6b">审查完成</span>';
+  }catch(e){
+    $('result_issues').innerHTML='<span class="rose">'+e.message+'</span>';
+    $('review_msg').innerHTML='<span class="rose">'+e.message+'</span>';
+  }
+  $('btn_review').disabled=false;$('btn_review').textContent='🔍 开始审查';
 }
 
 function exportTxt(){if(!chCache.length){alert('没有已生成的章节');return}let t='';chCache.forEach(c=>{t+='\n\n'+c.title+'\n\n'+c.content+'\n'});const b=new Blob([t],{type:'text/plain;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='小说全文.txt';a.click();$('gen_msg').innerHTML='<span style="color:#6b9c6b">已导出 '+chCache.length+' 章</span>'}
