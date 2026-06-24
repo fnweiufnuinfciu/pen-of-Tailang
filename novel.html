@@ -371,19 +371,25 @@ function parseChars(){const raw=$('char_input').value.trim();if(!raw)return[];le
 
 function parseOutline(text){
   const parts=text.split(/(第[一二三四五六七八九十\d]+章)/g);
-  const chs=[];let content='';let seenChapter=false;
+  const chs=[];let content='',title='';let seenChapter=false;
   for(let i=0;i<parts.length;i++){
     const p=parts[i];
     if(/^第[一二三四五六七八九十\d]+章$/.test(p)){
-      if(content.trim()&&seenChapter)chs.push({title:'',content:content.trim()});
-      content='';seenChapter=true;
+      if(content.trim()&&seenChapter)chs.push({title:title||('第'+(chs.length+1)+'章'),content:content.trim()});
+      content='';title='';seenChapter=true;
     }else if(i>0&&/^第[一二三四五六七八九十\d]+章$/.test(parts[i-1])){
+      // 提取标题：第一个句号/换行之前的部分
       const fp=p.search(/[。！？\.\!\?\n]/);
-      content=(fp>0&&fp<30)?p.slice(fp+1):p;
+      if(fp>0&&fp<40){
+        title='第'+parts[i-1].match(/[\d一二三四五六七八九十]+/)[0]+'章 '+p.slice(0,fp).replace(/^\s+/,'');
+        content=p.slice(fp+1);
+      }else{
+        title='第'+parts[i-1].match(/[\d一二三四五六七八九十]+/)[0]+'章';
+        content=p;
+      }
     }else if(seenChapter){content+=p}
   }
-  if(content.trim()&&seenChapter)chs.push({title:'',content:content.trim()});
-  chs.forEach((c,i)=>c.title='第'+(i+1)+'章');
+  if(content.trim()&&seenChapter)chs.push({title:title||('第'+(chs.length+1)+'章'),content:content.trim()});
   return chs.length?chs:[{title:'全文',content:text}];
 }
 // ==================== STATE ANCHOR ====================
@@ -463,10 +469,6 @@ class StateAnchor{
     return parts.join(' ');
   }
 }
-    if(this.goal)parts.push('[目标]'+this.goal);
-    return parts.join(' ');
-  }
-}
 
 let _anchor=new StateAnchor();
 
@@ -513,7 +515,7 @@ function buildUserPrompt(chContent,minWords,chNum,ctx,goal,enhanced){
   }else{
     p+='根据大纲写出本章完整内容。';
   }
-  p+='\n要求：开篇以\"## 自拟标题\"给出本章标题（10字内），正文至少'+minWords+'字，描写具体。';
+  p+='\n要求：正文至少'+minWords+'字，描写具体。';
   if(goal)p+='\n本章必须达成：'+goal+'。';
   return p;
 }
@@ -548,7 +550,7 @@ function parseAndReview(){
   if(!chapters.length){$('preview').innerHTML='<div class="rose" style="padding:20px">无法解析大纲</div>';return}
   confirmed=chapters;chapPlan=chapters.map(c=>({title:c.title,status:'pending',finalTitle:''}));logs.length=0;$('log_panel').innerHTML='';chCache.length=0;
   let h='<div style="padding:12px"><h3 style="font-family:\'Playfair Display\',\'Noto Serif SC\',serif;color:var(--gold);margin-bottom:18px;font-size:18px">解析到 '+chapters.length+' 章</h3>';
-  chapters.forEach((c,i)=>{h+='<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:14px"><span style="color:var(--gold);margin-right:10px;font-weight:600">'+(i+1)+'.</span>第'+(i+1)+'章<span class="dim" style="margin-left:10px;font-size:12px">（AI 自拟标题）</span></div>'});
+  chapters.forEach((c,i)=>{const realTitle=c.title.replace(/^第[一二三四五六七八九十\d]+章\s*/,'');h+='<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:14px"><span style="color:var(--gold);margin-right:10px;font-weight:600">'+(i+1)+'.</span><span>'+realTitle+'</span></div>'});
   h+='<div style="margin-top:16px;padding:12px;background:rgba(201,169,110,0.05);border-radius:var(--radius);text-align:center;font-size:14px;color:var(--gold)">确认无误后，点击下方 <b>「二 · 开始生成」</b></div></div>';
   $('preview').innerHTML=h;showPlan();$('gen_msg').innerHTML='<span class="gold">已解析 '+chapters.length+' 章</span>';
   $('btn_generate').disabled=false;$('btn_generate').classList.add('ready');
@@ -621,8 +623,7 @@ async function startGenerate(){
     }catch(e){addLog('  第'+(a+1)+'次失败: '+(e.message||e),'var(--rose)');if(a<2)await new Promise(r=>setTimeout(r,3000))}}
     if(!content){chapPlan[i].status='error';showPlan();addLog('  ✗ 跳过','var(--rose)');continue}
     chapPlan[i].status='done';
-    const tm=content.match(/^##\s*(.+?)(?:\n|$)/);
-    if(tm)chapPlan[i].finalTitle=tm[1];
+    chapPlan[i].finalTitle=ch.title.replace(/^第[一二三四五六七八九十\d]+章\s*/,'');
     showPlan();showChapter(i+1,ch.title,content);addLog('  ✓ '+content.length+'字','#6b9c6b');
     // 更新锚点状态（本地解析，零API调用）
     const updateResult=_anchor.update(content);
@@ -658,8 +659,7 @@ async function regenerateChapter(i){
   for(let a=0;a<2;a++){try{content=await callAPI(sysWithAnchor,prompt,_maxTok,_temp);const check=_anchor.update(content);if(check.violated){addLog('  ⚠ 违反禁止项:'+check.rule+'，重试...','var(--rose)');continue};break}catch(e){addLog('  重生成失败: '+(e.message||e),'var(--rose)');if(a===0)await new Promise(r=>setTimeout(r,2000))}}
   if(!content){chapPlan[i].status='error';showPlan();return}
   chapPlan[i].status='done';
-  const tm=content.match(/^##\s*(.+?)(?:\n|$)/);
-  if(tm)chapPlan[i].finalTitle=tm[1];
+  chapPlan[i].finalTitle=ch.title.replace(/^第[一二三四五六七八九十\d]+章\s*/,'');
   showPlan();showChapter(i+1,ch.title,content);
   addLog('  ✓ 重生成完成 ('+content.length+'字)','#6b9c6b');
   // 更新 chCache
