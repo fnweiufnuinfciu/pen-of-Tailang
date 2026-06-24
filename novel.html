@@ -389,35 +389,36 @@ function parseOutline(text){
 // ==================== STATE ANCHOR ====================
 class StateAnchor{
   constructor(init={}){
-    this.body={};   // {角色名:{左臂:'骨折',内力:'三成',...}}
-    this.location='';  // 当前所在地点
-    this.items={};     // {物品名:持有者}
-    this.ban=[];       // ['用左拳','使用XX']
-    this.goal='';      // mini_goal 本章小目标
+    this.body={};        // {角色名:{左臂:'骨折',内力:'三成',...}}
+    this.location='';    // 当前所在地点
+    this.items={};       // {物品名:持有者}
+    this.ban=[];         // ['用左拳','使用XX']
+    this.goal='';        // mini_goal 本章小目标
+    this.relationship='';// 男女主关系：暧昧/告白/热恋/冷战/分手/已婚
+    this.names=[];       // 核心人物名字列表
     if(init.body)this.body=init.body;
     if(init.location)this.location=init.location;
     if(init.items)this.items=init.items;
     if(init.ban)this.ban=init.ban;
+    if(init.names)this.names=init.names;
   }
 
   // 从已生成文本中提取状态变更 (纯本地正则，零API调用)
   update(text){
+    // 0. 关系状态变更（最重要！）
+    if(/告白|表白|在一起|做.*女朋友|做.*男朋友|确定了关系|成为.*情侣/.test(text))this.relationship='热恋-已告白确认关系';
+    else if(/求婚|订婚/.test(text))this.relationship='订婚';
+    else if(/结婚|婚礼|洞房|新娘|新郎|夫妻/.test(text))this.relationship='已婚';
+    else if(/分手|分开|结束|不再.*联系|断.*关系/.test(text))this.relationship='分手';
+    else if(/冷战|不理|生气.*不理/.test(text))this.relationship='冷战';
+    else if(/接吻|亲吻|吻.*她|吻.*他|深吻/.test(text)&&!this.relationship)this.relationship='暧昧-已接吻未告白';
     // 1. 身体状态变更
     const bodyPatterns=[
-      {re:/左臂[骨折断受伤残]/g,key:'左臂',val:'骨折'},
-      {re:/右臂[骨折断受伤残]/g,key:'右臂',val:'骨折'},
-      {re:/右手[骨折断受伤残]/g,key:'右手',val:'骨折'},
-      {re:/左手[骨折断受伤残]/g,key:'左手',val:'骨折'},
-      {re:/左腿[骨折断受伤残瘸]/g,key:'左腿',val:'骨折'},
-      {re:/右腿[骨折断受伤残瘸]/g,key:'右腿',val:'骨折'},
+      {re:/左臂[骨折断受伤残]/g,key:'左臂',val:'骨折'},{re:/右臂[骨折断受伤残]/g,key:'右臂',val:'骨折'},
+      {re:/右手[骨折断受伤残]/g,key:'右手',val:'骨折'},{re:/左手[骨折断受伤残]/g,key:'左手',val:'骨折'},
+      {re:/左腿[骨折断受伤残瘸]/g,key:'左腿',val:'骨折'},{re:/右腿[骨折断受伤残瘸]/g,key:'右腿',val:'骨折'},
       {re:/内力.{0,3}([一二三成半]|耗尽|枯竭|全失)/g,key:'内力',val:null},
-      {re:/修为.{0,3}(全失|大跌|倒退|散尽|跌落)/g,key:'修为',val:'全失'},
-      {re:/经脉.{0,3}(寸断|受损|断裂)/g,key:'经脉',val:'受损'},
-      {re:/昏迷|晕厥|昏死/g,key:'意识',val:'昏迷'},
-      {re:/苏醒|转醒|睁开.*眼|醒来/g,key:'意识',val:'清醒'},
-      {re:/[中毒中蛊]/g,key:'状态',val:'中毒'},
-      {re:/[解毒解蛊]/g,key:'状态',val:'正常'},
-      {re:/失去.*处.*[女男]身/g,key:'处女',val:'已破'},
+      {re:/昏迷|晕厥|昏死/g,key:'意识',val:'昏迷'},{re:/苏醒|转醒|睁开.*眼|醒来/g,key:'意识',val:'清醒'},
       {re:/怀孕|有.*身孕/g,key:'身孕',val:'有孕'},
     ];
     for(const p of bodyPatterns){
@@ -430,23 +431,23 @@ class StateAnchor{
     // 2. 地点变更
     const locMatch=text.match(/(?:来到|回到|进入|抵达|走入)(?:了)?(?:一处|一座|一间)?([^，。！？\n]{2,15})/);
     if(locMatch)this.location=locMatch[1];
-
     // 3. 物品变更
     const gainMatch=text.match(/(?:获得|得到|捡到|拾起|取出|拿出)(?:了)?(?:一[把枚件支个])?([^，。！？\n]{1,8})/g);
     if(gainMatch)gainMatch.forEach(m=>{const i=m.replace(/(?:获得|得到|捡到|拾起|取出|拿出)(?:了)?(?:一[把枚件支个])?/,'');this.items[i]=this.items[i]||'男主'});
     const loseMatch=text.match(/(?:失去|丢弃|遗失|丢失|毁掉)(?:了)?([^，。！？\n]{1,8})/g);
     if(loseMatch)loseMatch.forEach(m=>{const i=m.replace(/(?:失去|丢弃|遗失|丢失|毁掉)(?:了)?/,'');delete this.items[i]});
-
     // 4. 检查是否违反禁止列表
-    for(const b of this.ban){
-      if(text.includes(b))return {violated:true,rule:b};
-    }
+    for(const b of this.ban){if(text.includes(b))return {violated:true,rule:b};}
     return {violated:false};
   }
 
-  // 压缩为紧凑 prompt（目标：≤30 tokens）
+  // 压缩为紧凑 prompt
   format_prompt(){
     const parts=[];
+    // 人物名字（最重要！防止AI改名）
+    if(this.names.length)parts.push('[人物]'+this.names.join('|'));
+    // 关系状态
+    if(this.relationship)parts.push('[关系]'+this.relationship);
     // 身体状态
     const bodyParts=[];
     for(const [k,v] of Object.entries(this.body))bodyParts.push(k+v);
@@ -458,7 +459,10 @@ class StateAnchor{
     if(itemList.length)parts.push('[物品]'+itemList.slice(-8).join('|'));
     // 禁止
     if(this.ban.length)parts.push('[禁]'+this.ban.join('|'));
-    // mini_goal
+    if(this.goal)parts.push('[目标]'+this.goal);
+    return parts.join(' ');
+  }
+}
     if(this.goal)parts.push('[目标]'+this.goal);
     return parts.join(' ');
   }
@@ -485,7 +489,9 @@ function parseAnchorFromUI(){
 }
 
 function updateAnchorUI(){
-  $('anchor_display').textContent=_anchor.format_prompt()||'（空）';
+  const rel=_anchor.relationship?_anchor.relationship:'未设定';
+  const names=_anchor.names.length?_anchor.names.join('、'):'未设定';
+  $('anchor_display').innerHTML='<span style=\"color:var(--gold)\">关系：'+rel+'</span> | 人物：'+names+' | '+(_anchor.format_prompt()||'无');
 }
 
 // 修改 buildSystem 利用锚点
@@ -566,8 +572,17 @@ async function startGenerate(){
   $('progress_bar').style.width='0%';$('progress_percent').textContent='0%';
   $('gen_msg').innerHTML='<span class="gold">共 '+chapters.length+' 章，开始生成...</span>';
 
-  // 初始化锚点（从UI或默认）
+  // 初始化锚点
   if($('anchor_input').value.trim())parseAnchorFromUI();
+  // 从角色卡自动提取人物名
+  const charNames=chars.map(c=>c.name).filter(Boolean);
+  if(charNames.length&&!_anchor.names.length)_anchor.names=charNames;
+  // 从大纲推断初始关系
+  if(!_anchor.relationship){
+    const fullOutline=chapters.map(c=>c.content).join(' ');
+    if(/告白|表白|在一起|情侣|男朋友|女朋友/.test(fullOutline))_anchor.relationship='暧昧';
+    else _anchor.relationship='初识';
+  }
   _anchor.goal=$('mini_goal').value.trim()||'';
   updateAnchorUI();
 
@@ -592,7 +607,9 @@ async function startGenerate(){
     ctx+='\n【核心锚点——本故事真实状态，绝对不可违反】\n'+anchorStr+'\n';
 
     const enhanced=$('use_enhanced').checked;
-    const sysWithAnchor=system+'\n\n【核心锚点】'+anchorStr+'\n【硬性禁止】'+_anchor.ban.join('|')+'——以上任何一项在本章中绝对禁止出现。';
+    // 锚点放 system prompt 末尾 + 人物名锁定
+    const banStr=_anchor.ban.length?('\n【硬性禁止】'+_anchor.ban.join('|')+' ——本章绝对禁止出现以上任何一项。'):'';
+    const sysWithAnchor=system+'\n\n!!! 以下核心设定必须严格遵守，优先级高于一切 !!!\n人物名称：'+(_anchor.names.join('、')||'不变')+'\n当前关系阶段：'+(_anchor.relationship||'初始')+'\n物理状态：'+anchorStr+banStr+'\n!!! 绝对不可与上述设定冲突 !!!';
     const prompt=buildUserPrompt(ch.content,minWords,i+1,ctx,_anchor.goal,enhanced);
     let content=null;
     for(let a=0;a<3;a++){try{
@@ -634,7 +651,8 @@ async function regenerateChapter(i){
   const anchorStr=_anchor.format_prompt();
   let ctx='【核心锚点】'+anchorStr+'\n';
   const enhanced=$('use_enhanced').checked;
-  const sysWithAnchor=_sys+'\n\n【核心锚点】'+anchorStr+'\n【硬性禁止】'+_anchor.ban.join('|');
+  const banStr=_anchor.ban.length?('\n【硬性禁止】'+_anchor.ban.join('|')):'';
+  const sysWithAnchor=_sys+'\n\n!!! 核心设定 !!!\n人物：'+(_anchor.names.join('、')||'不变')+'\n关系：'+(_anchor.relationship||'初始')+'\n'+anchorStr+banStr;
   const prompt=buildUserPrompt(ch.content,_minWords,i+1,ctx,'',enhanced);
   let content=null;
   for(let a=0;a<2;a++){try{content=await callAPI(sysWithAnchor,prompt,_maxTok,_temp);const check=_anchor.update(content);if(check.violated){addLog('  ⚠ 违反禁止项:'+check.rule+'，重试...','var(--rose)');continue};break}catch(e){addLog('  重生成失败: '+(e.message||e),'var(--rose)');if(a===0)await new Promise(r=>setTimeout(r,2000))}}
