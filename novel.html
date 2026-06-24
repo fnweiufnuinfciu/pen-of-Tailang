@@ -531,8 +531,20 @@ function updateAnchorUI(){
 // 修改 buildSystem 利用锚点
 function buildSystem(chars){
   const custom=$('custom_sys_prompt').value.trim();
-  if(custom)return custom;
-  let base='你是一个专业的小说写作AI。根据大纲逐章创作小说。';if(!chars.length)return base;let p='你是一个小说写作AI。遵循角色设定和大纲逐章创作。\n\n';chars.forEach(c=>{p+='【'+c.name+'】'+c.desc+'\n性格：'+c.pers+'\n背景：'+c.scene+'\n守则：'+c.sys+'\n\n'});p+='按章节目录顺序，每章只写大纲指定的内容。';return p}
+  // 自定义提示词做底
+  if(custom){
+    let p=custom;
+    if($('use_enhanced').checked){p+='\n\n【增强写作准则】\n你是一位文笔优美、细腻且大胆的成人小说写手。\n- 每章必须包含至少一段详细性爱描写（前戏、过程、高潮、事后）\n- 所有私密部位（阴茎、阴道、阴唇、乳头、肛门）从形状、颜色、温度、触感、反应等角度细致刻画\n- 身体反应必须详细：颤抖、痉挛、腿部绷直、脚趾蜷缩、哭泣、呻吟、高潮收缩、潮吹等\n- 注重腿部、足部、大腿内侧等感官描写'}
+    return p;
+  }
+  // 默认逻辑
+  let base='你是一个专业的小说写作AI。根据大纲逐章创作小说。';
+  if(!chars.length)return base;
+  let p='你是一个小说写作AI。遵循角色设定和大纲逐章创作。\n\n';
+  chars.forEach(c=>{p+='【'+c.name+'】'+c.desc+'\n性格：'+c.pers+'\n背景：'+c.scene+'\n守则：'+c.sys+'\n\n'});
+  if($('use_enhanced').checked){p+='\n【核心写作准则】\n你是一位文笔优美、细腻且大胆的成人小说写手。\n- 每章必须包含至少一段详细性爱描写（前戏、过程、高潮、事后）\n- 所有私密部位（阴茎、阴道、阴唇、乳头、肛门）从形状、颜色、温度、触感、反应等角度细致刻画\n- 身体反应必须详细：颤抖、痉挛、腿部绷直、脚趾蜷缩、哭泣、呻吟、高潮收缩、潮吹等\n- 注重腿部、足部、大腿内侧等感官描写'}else{p+='按大纲逐章创作，不自行添加大纲未提及的情节。'}
+  return p;
+}
 
 function buildUserPrompt(chContent,minWords,chNum,ctx,goal,enhanced){
   let p='【任务：只写第'+chNum+'章】\n\n'+ctx+'\n【本章大纲】\n'+chContent+'\n\n';
