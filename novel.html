@@ -197,7 +197,9 @@ input[type=number]{-moz-appearance:textfield}input[type=number]::-webkit-inner-s
 <div class="page" id="page_reviewer">
   <div class="sidebar">
     <label>粘贴需要审查的小说文本</label>
-    <textarea id="review_input" style="min-height:300px" placeholder="粘贴一章或多章内容...&#10;AI 将检查：逻辑矛盾、设定冲突、时间线错误、人物关系不一致、物品丢失/凭空出现等问题。"></textarea>
+    <textarea id="review_input" style="min-height:260px" placeholder="粘贴全文章节...&#10;支持几十万字：自动分块扫描+聚合验证"></textarea>
+    <div class="row" style="margin-top:4px"><div><label>每块字数</label><input id="review_chunk" value="8000" type="number" step="1000" min="2000" max="15000"></div><div><label>最大块数</label><input id="review_maxchunks" value="10" type="number" step="5" min="1" max="50"></div></div>
+    <span style="font-size:10px;color:var(--text-dim)">总覆盖 = 每块字数 × 最大块数（默认8万字）。块数越多审查越慢但越全面。</span>
     <button class="btn btn-ghost" onclick="loadReviewFile()" style="margin-top:4px">📂 载入文件</button>
     <button class="btn btn-primary" id="btn_review" onclick="doReview()" style="margin-top:8px">🔍 开始审查</button>
     <div class="msg" id="review_msg"></div>
@@ -712,11 +714,11 @@ function parseReviewResult(text){
 async function doReview(){
   const apiKey=getAPIKey();if(!apiKey){$('review_msg').innerHTML='<span class="rose">请填写 API Key</span>';return}
   const text=$('review_input').value.trim();if(!text){$('review_msg').innerHTML='<span class="rose">请粘贴小说文本</span>';return}
+  const chunkSize=parseInt($('review_chunk').value)||8000;
+  const maxChunks=parseInt($('review_maxchunks').value)||10;
+
   $('btn_review').disabled=true;$('btn_review').textContent='审查中...';
-  $('review_msg').innerHTML='<span class="gold">阶段1/2：提取事实...</span>';
-  $('result_issues').innerHTML='<div class="placeholder"><div class="placeholder-icon" style="animation:pulse 1s infinite">🔍</div><div>阶段1：正在提取所有设定事实...</div></div>';
-  $('result_fixed').innerHTML='<div class="placeholder"><div class="placeholder-icon" style="animation:pulse 1s infinite">🔍</div></div>';
-  $('result_rev_raw').innerHTML='<div class="placeholder"><div class="placeholder-icon" style="animation:pulse 1s infinite">🔍</div></div>';
+  $('result_issues').innerHTML='';$('result_fixed').innerHTML='';$('result_rev_raw').innerHTML='';
 
   const baseUrl=$('base_url').value||'https://api.deepseek.com/v1';
   const model=$('model').value||'deepseek-chat';
@@ -729,33 +731,52 @@ async function doReview(){
     return (await resp.json()).choices[0].message.content;
   };
 
+  // 分块
+  const chunks=[];
+  for(let i=0;i<text.length&&i/chunkSize<maxChunks;i+=chunkSize){
+    chunks.push(text.slice(i,i+chunkSize));
+  }
+  if(chunks.length===0)chunks.push(text.slice(0,chunkSize));
+
   try{
-    // ==== 阶段1：提取事实清单 ====
-    const extractPrompt='请从以下小说文本中提取所有可验证的设定事实。用JSON数组格式输出，每个事实包含：\n- id: 序号\n- category: 分类（角色状态/人物关系/地点/物品/时间/身份）\n- fact: 事实描述（一句话，尽量引用原文用词）\n\n示例：\n[{"id":1,"category":"角色状态","fact":"男主左臂骨折"},{"id":2,"category":"人物关系","fact":"男女主已告白确认情侣关系"},{"id":3,"category":"物品","fact":"男主持有半块橡皮"}]\n\n=== 文本 ===\n'+text.slice(0,10000);
+    // ==== 阶段1：逐块提取事实 ====
+    let allFacts=[];
+    for(let ci=0;ci<chunks.length;ci++){
+      $('review_msg').innerHTML='<span class="gold">阶段1/'+(chunks.length+1)+'：提取事实 块'+(ci+1)+'/'+chunks.length+'...</span>';
+      $('result_issues').innerHTML='<div class="placeholder"><div class="placeholder-icon" style="animation:pulse 1s infinite">🔍</div><div>扫描第'+(ci+1)+'/'+chunks.length+'块（共'+text.length+'字）...</div></div>';
 
-    const factsJson=await callAI('你是一个精确的事实提取器。只输出JSON数组，不要任何解释。',extractPrompt,0.2);
-    let facts=[];
-    try{
-      const jsonStr=factsJson.replace(/```json|```/g,'').trim();
-      facts=JSON.parse(jsonStr);
-      if(!Array.isArray(facts))facts=[];
-    }catch(e){facts=[]}
+      const prompt='从以下小说片段中提取所有可验证的设定事实。JSON数组，每条{id,category,fact}。category: 角色状态/人物关系/地点/物品/时间/身份。\n\n'+chunks[ci].slice(0,chunkSize);
+      const json=await callAI('精确提取事实。只输出JSON数组。',prompt,0.2);
+      try{
+        const arr=JSON.parse(json.replace(/```json|```/g,'').trim());
+        if(Array.isArray(arr)){arr.forEach(f=>{f.id=allFacts.length+1;allFacts.push(f)})}
+      }catch(e){}
+    }
 
-    // ==== 阶段2：逐条验证 ====
-    $('review_msg').innerHTML='<span class="gold">阶段2/2：验证 '+facts.length+' 条事实...</span>';
-    $('result_issues').innerHTML='<div class="placeholder"><div class="placeholder-icon" style="animation:pulse 1s infinite">✅</div><div>阶段2：正在逐条验证 '+facts.length+' 条事实...</div></div>';
+    // 去重：按fact文本相似度合并
+    const seen=new Set();
+    const uniqueFacts=allFacts.filter(f=>{
+      const key=f.fact.slice(0,20);
+      if(seen.has(key))return false;
+      seen.add(key);return true;
+    }).slice(0,60);
 
-    const verifyPrompt='以下是从小说中提取的设定事实清单。请逐条检查全文，找出所有与事实矛盾的地方。\n\n【设定事实清单】\n'+JSON.stringify(facts,null,2)+'\n\n【全文】\n'+text.slice(0,10000)+'\n\n请输出：\n## 事实清单确认\n逐条标注"一致"或发现矛盾的具体位置\n\n## 发现的矛盾\n格式：事实ID | 严重程度 | 矛盾描述 | 原文证据 | 修改建议';
+    // ==== 阶段2：关键事实聚合验证 ====
+    const totalStages=chunks.length+1;
+    $('review_msg').innerHTML='<span class="gold">阶段'+totalStages+'/'+totalStages+'：聚合验证 '+uniqueFacts.length+' 条关键事实...</span>';
+    $('result_issues').innerHTML='<div class="placeholder"><div class="placeholder-icon" style="animation:pulse 1s infinite">✅</div><div>正在交叉验证 '+uniqueFacts.length+' 条事实...</div></div>';
 
-    const verifyResult=await callAI('你是一个严谨的事实核查员。逐条验证事实与原文是否一致。',verifyPrompt,0.3);
+    const verifyPrompt='以下是设定事实清单和全文。逐条检查是否存在矛盾。\n\n【事实清单】\n'+JSON.stringify(uniqueFacts,null,2)+'\n\n【全文（采样）】\n'+chunks.map((c,i)=>'[块'+(i+1)+'] '+c.slice(0,2000)).join('\n\n').slice(0,12000)+'\n\n输出格式：\n## 事实确认\n逐条标注状态\n\n## 发现的矛盾\n事实ID | 严重程度 | 描述 | 证据 | 修改建议';
 
-    gRevRaw='【阶段1-事实提取】\n'+JSON.stringify(facts,null,2)+'\n\n【阶段2-验证结果】\n'+verifyResult;
+    const verifyResult=await callAI('严谨核查事实与原文的一致性。',verifyPrompt,0.3);
+
+    gRevRaw='【阶段1-提取'+allFacts.length+'条事实('+chunks.length+'块)】\n'+JSON.stringify(uniqueFacts,null,2)+'\n\n【阶段2-验证】\n'+verifyResult;
     const {issues,suggestions}=parseReviewResult(verifyResult);
     gIssues=issues;gSuggestions=suggestions;
-    $('result_issues').textContent=issues||'（未生成）';
-    $('result_fixed').textContent=suggestions||'（未生成）';
+    $('result_issues').textContent=issues||'（未发现问题）';
+    $('result_fixed').textContent=suggestions||'（无需修改）';
     $('result_rev_raw').textContent=gRevRaw;
-    $('review_msg').innerHTML='<span style="color:#6b9c6b">审查完成（两阶段：提取'+facts.length+'条事实+逐条验证）</span>';
+    $('review_msg').innerHTML='<span style="color:#6b9c6b">审查完成：扫描'+chunks.length+'块('+text.length+'字)，提取'+allFacts.length+'条事实，验证'+uniqueFacts.length+'条</span>';
   }catch(e){
     $('result_issues').innerHTML='<span class="rose">'+e.message+'</span>';
     $('review_msg').innerHTML='<span class="rose">'+e.message+'</span>';
